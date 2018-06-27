@@ -3,11 +3,6 @@ import numpy as np
 import time
 import os
 import matplotlib.pyplot as plt
-lastFrame = 0 # Global variable needed for the callback. 
-              
-              # * Workaround this superugly hack:  
-              # create a Streaming object with a "callback()" method and a 
-              # lastFrame internal variable. <-- ToDo.
 
 
 def main(subID = ''):
@@ -153,16 +148,12 @@ def playTone(f, a0, port, par):
         key  : key pressed, None if no key is pressed.
     """
 
-    global lastFrame
-    lastFrame = 0
-
-    sound  = createTone(f, a0, par)
-    stream = port.open(format          = pyaudio.paFloat32,
-                       channels        = 1,
-                       rate            = par['fs'],
-                       output          = True, 
-                       stream_callback = lambda i, f, t, s: 
-                                                callback(i, f, t, s, sound))
+    streamer = PyAudioStreamer(f, a0, par)
+    stream   = port.open(format          = pyaudio.paFloat32,
+                         channels        = 1,
+                         rate            = par['fs'],
+                         output          = True, 
+                         stream_callback = streamer.callback)
 
     stream.start_stream()
     key = listenKeyPress(par['dur'] + 2 * par['tau'] + par['wait'])   
@@ -224,122 +215,6 @@ def listenKeyPress(waitTime, terminateOnPress = False, verbose = True):
 
 
 
-def createTone(f, a0, par):
-
-    """ 
-    Creates a pure tone. 
-    
-    * It would be better to generate the tone online. Adding the ramps might
-    be challenging but it should be possible with a phase internal variable 
-    if the function is added as a method to the Streaming object <-- ToDo.
-
-    Inputs
-        f     : pure tone frequency (Hz)
-        a0    : waveform amplitude (0 < a0 < 1)
-        par   : dictionary specifyint the duration, sampling rate, and hamming
-                window ramp/damp size; check loadParameters()
-    
-    Outputs 
-        sound : sound waveform
-    """
-
-    x     = np.linspace(0, par['dur'], int(par['dur'] * par['fs']));
-    omega = 2 * np.pi * f
-    sound = (a0 * np.sin(omega * x)).astype(np.float32)
-
-    if par['tau'] > 0:
-        hL = int(par['tau'] * par['fs'])
-        hw = np.hamming(2 * hL)
-        sound[:hL ] = sound[:hL ] * hw[:hL]
-        sound[-hL:] = sound[-hL:] * hw[hL:]
-
-        sound = (np.concatenate((np.zeros((hL,)), 
-                                 sound, 
-                                 np.zeros((hL,))))).astype(np.float32)
-
-    return sound
-
-
-
-def callback(in_data, frame_count, time_info, status, sound):
-
-    """ 
-    Callback function for pyAudio stream. Returns a chunk of the provided 
-    sound. Needs a "lastFrame" variable defined globally to keep track of 
-    the position within the sound.
-    
-    Inputs
-        in_data     : arg required by pyAudio but not in use
-        frame_count : chunk size (integer)
-        time_info   : arg required by pyAudio but not in use
-        status      : arg required by pyAudio but not in use
-        sound       : waveform of the entire sound
-    
-    Outputs 
-        chunk       : excerpt of the sound waveform
-        finished    : flag that marks if the sound waveform is deplected
-    """
-
-    global lastFrame
-
-    prevFrame = lastFrame
-    lastFrame = prevFrame + frame_count
-    
-    if lastFrame >= len(sound):
-        finished = True
-        lastFrame = len(sound)
-    else:
-        finished = False
-
-    chunk = sound[prevFrame:lastFrame]
-
-    return (chunk, finished)
-
-
-
-def loadCalibrationParameters():
-
-    """ 
-    Returns the calibration parameters. Change this function to adjust them.
-    
-    Outputs 
-        calf    : path to the calibration npz file 
-        freq    : array holding the considered frequency values in Hz
-        loud    : array holding the considered loundess values in dB
-        freq    : flag that marks if the sound waveform is deplected
-        prevA0  : list of arrays with the previous calibration of the system
-        epsilon : dictionary mapping pressed keys to adjustment sizes 
-        prevA0  : flag that marks if the sound waveform is deplected
-        par     : dictionary with the basic parameters of the sounds
-    """
-
-    par  = {'dur'  : 100,   # maximum duration of the sound (seconds)
-            'fs'   : 48000, # sample rate Hz
-            'tau'  : 0}     # ramps time windows
-
-    calf = './calibration.npz'   # path to calibration file
-
-    epsilon = {'\x1b[A': 0.1,    # keyboard map for the calibration
-               '\x1b[C': 0.05,   # procedure
-               'w':      0.01,
-               's':      0.005,
-               'x':      0.001,
-               'z':     -0.001,
-               'a':     -0.005,
-               'q':     -0.01,
-               '\x1b[D':-0.05, 
-               '\x1b[B':-0.1}
-
-
-    calFile = np.load(calf)
-    loud    = calFile['LOUD']
-    freq    = calFile['FREQ']
-    prevA0  = calFile['A0']
-
-    return(calf, freq, loud, prevA0, epsilon, par)
-
-
-
 def loadParameters():
 
     """ 
@@ -376,6 +251,88 @@ def loadParameters():
         print "but calibration was performed at {}Hz".format(calFile['FS'])
 
     return par
+
+
+
+class PyAudioStreamer:
+
+    """ 
+    Support class wrappng the callback function for pyAudio stream. 
+
+    Inputs
+        sound : sound waveform
+    """
+
+    def __init__(self, f, a0, par):
+        self.createTone(f, a0, par)
+        self.lastFrame = 0
+
+
+    def callback(self, in_data, frame_count, time_info, status):
+
+        """ 
+        Callback method for pyAudio stream. Returns a chunk of the provided 
+        sound. The sound must be provided when invoking the class Streamer.
+        
+        Inputs
+            in_data     : arg required by pyAudio but not in use
+            frame_count : chunk size (integer)
+            time_info   : arg required by pyAudio but not in use
+            status      : arg required by pyAudio but not in use
+        
+        Outputs 
+            chunk       : excerpt of the sound waveform
+            finished    : flag that marks if the sound waveform is deplected
+        """
+
+        prevFrame = self.lastFrame
+        self.lastFrame = prevFrame + frame_count
+        
+        if self.lastFrame >= len(self.sound):
+            finished = True
+            self.lastFrame = len(self.sound)
+        else:
+            finished = False
+
+        chunk = self.sound[prevFrame:self.lastFrame]
+
+        return (chunk, finished)
+
+
+    def createTone(self, f, a0, par):
+
+        """ 
+        Creates a pure tone. 
+        
+        * It would be better to generate the tone online. <-- ToDo.
+
+        Inputs
+            f     : pure tone frequency (Hz)
+            a0    : waveform amplitude (0 < a0 < 1)
+            par   : dictionary specifyint the duration, sampling rate, and 
+                    hamming window ramp/damp size; check loadParameters()
+        
+        Outputs 
+            sound : sound waveform
+        """
+
+        x     = np.linspace(0, par['dur'], int(par['dur'] * par['fs']));
+        omega = 2 * np.pi * f
+        sound = (a0 * np.sin(omega * x)).astype(np.float32)
+
+        if par['tau'] > 0:
+            hL = int(par['tau'] * par['fs'])
+            hw = np.hamming(2 * hL)
+            sound[:hL ] = sound[:hL ] * hw[:hL]
+            sound[-hL:] = sound[-hL:] * hw[hL:]
+
+            sound = (np.concatenate((np.zeros((hL,)), 
+                                     sound, 
+                                     np.zeros((hL,))))).astype(np.float32)
+
+        self.sound = sound
+
+
 
 
 

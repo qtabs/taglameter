@@ -67,22 +67,18 @@ def calibrateTone(f, l, a0, port, par, epsilon):
         a0      : adjusted waveform amplitude (0 <= a0 <= 1)
     """
 
-    global lastFrame
     fs  = float(par['fs'])
     dur = par['dur']
     key = None
 
     while not (key in ['\n', ' ']):
 
-        lastFrame = 0
-
-        sound  = taglameter.createTone(f, a0, par)
-        stream = port.open(format          = pyaudio.paFloat32,
-                           channels        = 1,
-                           rate            = par['fs'],
-                           output          = True, 
-                           stream_callback = lambda i, f, t, s: 
-                                      taglameter.callback(i, f, t, s, sound))
+        streamer = taglameter.PyAudioStreamer(f, a0, par)
+        stream   = port.open(format          = pyaudio.paFloat32,
+                             channels        = 1,
+                             rate            = par['fs'],
+                             output          = True, 
+                             stream_callback = streamer.callback)
         
         stream.start_stream()
         
@@ -147,9 +143,6 @@ def loadCalibrationParameters():
     prevA0  = calFile['A0']
 
     return(calf, freq, loud, prevA0, epsilon, par)
-
-
-
 
 
 

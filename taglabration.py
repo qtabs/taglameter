@@ -8,12 +8,6 @@ def calibrate():
     Main function for the recalibration procedure. After the recalibration is 
     finished the paramters are saved in an npz file specified in 
     loadCalibrationParameters(). A previous calibration is required.
-    
-    * Calibration functions should be moved to another library. Common 
-    functions to calibrate() and measureThreshold() should be moved to a core
-    library. <-- ToDo. 
-    * A calibration initialisation should be created if no previous 
-    calibration exists. <-- ToDo.
 
     Inputs
         port : pyAudio port to stream the sound
@@ -136,11 +130,15 @@ def loadCalibrationParameters():
                '\x1b[D':-0.05, 
                '\x1b[B':-0.1}
 
-
-    calFile = np.load(calf)
-    loud    = calFile['LOUD']
-    freq    = calFile['FREQ']
-    prevA0  = calFile['A0']
+    if os.path.isfile(calf):
+        calFile = np.load(calf)
+        loud    = calFile['LOUD']
+        freq    = calFile['FREQ']
+        prevA0  = calFile['A0']
+    else:
+        loud   = np.arange(-10, 91, 5)
+        freq   = 1000 * np.array([1,1.5,2,3] + range(4, 21, 2) + [0.25,0.5])
+        prevA0 = 0.9 * np.ones([len(freq), len(loud)])
 
     return(calf, freq, loud, prevA0, epsilon, par)
 

@@ -2,13 +2,13 @@ import pyaudio
 import numpy as np
 import time
 import os
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 
 def main(subID = ''):
 
     port = pyaudio.PyAudio()  # Opens a pyAudio streaming port
-    par  = loadParameters()   # Loads the audiometer parameters
+    
 
     print "\n    ---------------------------------------------------"
     print   "    | Welcome to the incredible TaboGladdoAudioMeter! |"
@@ -30,15 +30,18 @@ def main(subID = ''):
     time.sleep(1)
     print "\n"
 
-    threshold = np.zeros(len(par['freq']))
+    chan = ['left', 'right']
 
     # Thresholding is done sequentially for each frequency in par['freq']
-    for fIx, freq in enumerate(par['freq']):
-        print 'Testing f = {:.0f}Hz'.format(freq)
-        threshold[fIx] = measureThreshold(fIx, port, par)
-        print '---- done! Threshold at {:.1f} dB \n'.format(threshold[fIx])
+    for ichan in chan:
+        par  = loadParameters(ichan)   # Loads the audiometer parameters
+        threshold = np.zeros(len(par['freq']))
+        for fIx, freq in enumerate(par['freq']):
+            print 'Testing {} f = {:.0f}Hz'.format(ichan, freq)
+            threshold[fIx] = measureThreshold(fIx, port, par, chan)
+            print '---- done! Threshold {} at {:.1f} dB \n'.format(ichan, threshold[fIx])
 
-    saveThresholds(threshold, subID, par)
+    saveThresholds(threshold, subID, par, chan)
     port.terminate()
 
     # * Add plots of the thresholds here? It would be better to print the 
@@ -49,7 +52,7 @@ def main(subID = ''):
 
 
 
-def saveThresholds(threshold, subID, par):
+def saveThresholds(threshold, subID, par, chan):
 
     """ 
     Saves the hearing thresholds in a plain textfile.
@@ -68,8 +71,11 @@ def saveThresholds(threshold, subID, par):
     headLine = "  |".join(["{:>7.0f}".format(f) for f in par['freq']])
     resLine  = "  |".join(["{:>7.1f}".format(t) for t in threshold])
 
-    headLine = "Freq   (Hz)  |" + headLine
-    resLine  = "Thresh (dB)  |" + resLine
+    if chan == 'left':
+        headLine = "Freq L (Hz)  |" + headLine
+    else:
+        headLine = "Freq R (Hz)  |" + headLine
+    resLine  = "Thresh  (dB)  |" + resLine
     header   = header + "\n" + "-" * len(headLine) + "\n"
     footer   = "\n" + "-" * len(headLine) + "\n" + footer
 
@@ -90,10 +96,12 @@ def saveThresholds(threshold, subID, par):
 
 
 
-def measureThreshold(fIx, port, par):
+def measureThreshold(fIx, port, par, chan):
 
     """ 
     Runs the algorithm to measure the hearing threshold of a given frequency.
+    It uses the "up-5 down-10" technique. The process is repeated until
+    participant responds to two out of three repetitions.
 
     Inputs
         fIx  : integer such that par['freq'][fIx] = tested frequency (Hz)
@@ -103,35 +111,48 @@ def measureThreshold(fIx, port, par):
     Outputs 
         key  : key pressed, None if no key is pressed.
     """
+    from collections import Counter
 
     freq     = par['freq'][fIx] # fIx : current frequency = par['freq'][lIx]
     lIx      = par['l0Ix']      # lIx : current loudness  = par['loud'][lIx]
 
     prev = True  # Flags if the sound was heared in the previous iteration
-    while True:
-        # Wait for a normally distributed amount of time
-        time.sleep(par['avgT'] + par['sgmT'] * abs(np.random.randn()))
-        print "     -> loudness = {:>5.1f}dB".format(par['loud'][lIx]),
-        key = playTone(freq, par['A0'][fIx][lIx], port, par)
-        print ""
-        if key is not None:
-            if prev:
-                if lIx != 0: # if loudness index is not at min level
-                    lIx = max(0, lIx - 2) # two down, with saturation at 0
-                    prev = True
-                else: # if loudness is at minimum, return minimum
+    last_spl = []  # Remember last SPL played.
+    max_played = 0  
+
+    # Need to test left and right channels separately.
+    for chan in ['left', 'right']:
+        while True:
+            # Wait for a normally distributed amount of time
+            time.sleep(par['avgT'] + par['sgmT'] * abs(np.random.randn()))
+            print "     -> loudness = {:>5.1f}dB".format(par['loud'][lIx])
+            # Return key press.
+            key = playTone(freq, par['A0'][fIx][lIx], port, par, chan)
+            print ""
+            # Count number of SPL occurences.
+            num_played = Counter(last_spl)
+            if num_played:  # Check if not empty.
+                max_played = num_played[max(num_played, key=num_played.get)]
+            if key is not None:
+                if prev:
+                    if lIx != 0 and max_played < 3: # if loudness index is not at min level
+                        lIx = max(0, lIx - 2) # two down, with saturation at 0
+                        prev = True
+                    else: # if loudness is at minimum, return minimum
+                        return par['loud'][lIx]
+                else:
                     return par['loud'][lIx]
-            else:
-                return par['loud'][lIx]
-        else:
-            lIx += 1 # one up
-            prev = False
-            if lIx >= len(par['loud']): # if loudness index is at max level
-                return par['loud'][lIx] # return minimum
+            elif key is None:
+                if max_played < 4:
+                    lIx += 1 # one up
+                else:
+                   return par['loud'][lIx]
+                   prev = False
+            last_spl.append(lIx)
 
 
 
-def playTone(f, a0, port, par):
+def playTone(f, a0, port, par, chan):
 
     """ 
     Plays a pure tone and waits for a key press through a limited amount of
@@ -148,9 +169,9 @@ def playTone(f, a0, port, par):
         key  : key pressed, None if no key is pressed.
     """
 
-    streamer = PyAudioStreamer(f, a0, par)
+    streamer = PyAudioStreamer(f, a0, par, chan)
     stream   = port.open(format          = pyaudio.paFloat32,
-                         channels        = 1,
+                         channels        = 2,
                          rate            = par['fs'],
                          output          = True, 
                          stream_callback = streamer.callback)
@@ -215,25 +236,31 @@ def listenKeyPress(waitTime, terminateOnPress = False, verbose = True):
 
 
 
-def loadParameters():
+def loadParameters(chan):
 
     """ 
     Returns the audiometer parameters. All frequencies and the initial 
-    louness must belong to the values stored in the calibration file.
+    loudness must belong to the values stored in the calibration file.
     """
 
     # Audiometer parameters -- Feel free to mess around! :)
-    par = {'dur'  : 1.1,   # tone duration including ramps (seconds)
-           'fs'   : 48000, # sample rate Hz
-           'tau'  : 0.05,  # ramps time windows
-           'avgT' : 1,     # average pause time between tones (seconds)
-           'sgmT' : 1,     # std of pause time between tones (seconds)
-           'wait' : 1,     # response waiting time after offset (seconds)
-           'l0'   : 30,    # initial loudness for thresholding (dB SPL)
-           'freq' : [.25, .5, 1, 2, 3, 4, 6, 8, 10, 12, 14, 16, 20], # kHz
-           'calf' : './calibration.npz' # path to calibration file
+    par = {'dur'    : 1.1,   # tone duration including ramps (seconds)
+           'fs'     : 44100, # sample rate Hz
+           'tau'    : 0.05,  # ramps time windows
+           'avgT'   : 1,     # average pause time between tones (seconds)
+           'sgmT'   : 1,     # std of pause time between tones (seconds)
+           'wait'   : 1,     # response waiting time after offset (seconds)
+           'l0'     : 30,    # initial loudness for thresholding (dB SPL)
+           'freq'   : [.25, .5, 1, 2, 4, 8, 12.5, 14], # kHz
+           'calf' : '' # placeholder path to calibration file
            }
 
+    # Choose calibration based on left and right channel.
+    if chan == 'left':
+        par['calf'] = './calibration_left.npz'
+    else:
+        par['calf'] = './calibration_right.npz'
+            
 
     # Transforms --- touching this can be punished with death (by spoon!)
     par['freq'] = np.array(par['freq']) * 1000  
@@ -257,14 +284,14 @@ def loadParameters():
 class PyAudioStreamer:
 
     """ 
-    Support class wrappng the callback function for pyAudio stream. 
+    Support class wrapping the callback function for pyAudio stream. 
 
     Inputs
         sound : sound waveform
     """
 
-    def __init__(self, f, a0, par):
-        self.createTone(f, a0, par)
+    def __init__(self, f, a0, par, chan):
+        self.createTone(f, a0, par, chan)
         self.lastFrame = 0
 
 
@@ -299,7 +326,7 @@ class PyAudioStreamer:
         return (chunk, finished)
 
 
-    def createTone(self, f, a0, par):
+    def createTone(self, f, a0, par, chan):
 
         """ 
         Creates a pure tone. 
@@ -311,14 +338,28 @@ class PyAudioStreamer:
             a0    : waveform amplitude (0 < a0 < 1)
             par   : dictionary specifyint the duration, sampling rate, and 
                     hamming window ramp/damp size; check loadParameters()
+            chan  : 'left' or 'right' channel
         
         Outputs 
             sound : sound waveform
         """
 
+        from struct import pack
+
         x     = np.linspace(0, par['dur'], int(par['dur'] * par['fs']));
         omega = 2 * np.pi * f
-        sound = (a0 * np.sin(omega * x)).astype(np.float32)
+        sound = []
+        sound = ''
+        if chan == 'left':
+            print('left')
+            for ix in x:
+                sound += pack('h', (a0 * np.sin(omega * ix)).astype(np.float32))
+                sound += pack('h', (0 * np.sin(omega * ix)).astype(np.float32))
+        elif chan == 'right':
+            print('right')
+            for ix in x:
+                sound.append((0 * np.sin(omega * ix)).astype(np.float32))
+                sound.append((a0 * np.sin(omega * ix)).astype(np.float32))
 
         if par['tau'] > 0:
             hL = int(par['tau'] * par['fs'])
@@ -332,10 +373,7 @@ class PyAudioStreamer:
 
         self.sound = sound
 
-
-
-
-
+        
 if __name__ == "__main__":
     
     main()

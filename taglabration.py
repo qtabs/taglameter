@@ -1,6 +1,7 @@
 import pyaudio
 import numpy as np
 import taglameter
+import os
 
 def calibrate():
 
@@ -113,6 +114,8 @@ def loadCalibrationParameters():
         par     : dictionary with the basic parameters of the sounds
     """
 
+    
+
     par  = {'dur'  : 100,   # maximum duration of the sound (seconds)
             'fs'   : 48000, # sample rate Hz
             'tau'  : 0}     # ramps time windows
@@ -136,7 +139,7 @@ def loadCalibrationParameters():
         freq    = calFile['FREQ']
         prevA0  = calFile['A0']
     else:
-        loud   = np.arange(-10, 91, 5)
+        loud   = np.arange(-10, 51, 5)
         freq   = 1000 * np.array([1,1.5,2,3] + range(4, 21, 2) + [0.25,0.5])
         prevA0 = 0.9 * np.ones([len(freq), len(loud)])
 
